@@ -1,0 +1,2 @@
+# No dependencies: the server only uses the Python standard library.
+# This file lets OpenShift "Import from Git" detect a Python project.

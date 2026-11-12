@@ -1,0 +1,128 @@
+# Everything needed to build and run the app on OpenShift, from GitHub.
+#
+#   oc apply -f openshift/snake.yaml
+#   oc start-build snake --follow
+#
+# Change the Git URL below if your repository has another name.
+
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: snake
+  labels:
+    app: snake
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: snake
+  labels:
+    app: snake
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/darrengls/snake-openshift.git
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: snake:latest
+  triggers:
+    - type: ConfigChange
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snake
+  labels:
+    app: snake
+  annotations:
+    # Redeploy automatically each time a new image is built.
+    image.openshift.io/triggers: >-
+      [{"from":{"kind":"ImageStreamTag","name":"snake:latest"},
+        "fieldPath":"spec.template.spec.containers[?(@.name==\"snake\")].image"}]
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: snake
+  template:
+    metadata:
+      labels:
+        app: snake
+    spec:
+      containers:
+        - name: snake
+          image: snake:latest
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: APP_VERSION
+              value: "1.0.0"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snake
+  labels:
+    app: snake
+spec:
+  selector:
+    app: snake
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: snake
+  labels:
+    app: snake
+  annotations:
+    # By default the router keeps a browser on the same pod (cookie).
+    # Disabled here so refreshing the page shows the load balancing.
+    haproxy.router.openshift.io/disable_cookies: "true"
+    haproxy.router.openshift.io/balance: roundrobin
+spec:
+  to:
+    kind: Service
+    name: snake
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
